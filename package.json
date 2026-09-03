@@ -1,0 +1,33 @@
+{
+  "name": "linuni",
+  "version": "1.0.0",
+  "description": "Robinhood Uniswap V3 LP Manager (Pure JavaScript & JSON Storage)",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/cli/index.js",
+    "cli": "node src/cli/index.js",
+    "bot": "node src/bot/index.js",
+    "telegram": "node src/bot/index.js",
+    "check-wallet": "node src/cli/index.js --action=wallet",
+    "check-positions": "node src/cli/index.js --action=positions"
+  },
+  "keywords": [
+    "uniswap-v3",
+    "robinhood-chain",
+    "liquidity-provider",
+    "usdg",
+    "eth",
+    "nodejs"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@inquirer/prompts": "^7.2.1",
+    "dotenv": "^16.4.7",
+    "grammy": "^1.34.0",
+    "picocolors": "^1.1.1",
+    "viem": "^2.21.55",
+    "zod": "^3.24.1"
+  }
+}
