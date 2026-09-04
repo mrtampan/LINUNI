@@ -201,8 +201,17 @@ export async function processTokenDiscovery(ctx, tokenInput) {
       pools: discovery.pools,
     });
 
+    let poolListText = `🏊 <b>Available Pools for ${escapeHtml(discovery.token.symbol)}:</b>\n\n`;
+    discovery.pools.forEach((p, idx) => {
+      poolListText +=
+        `<b>${idx + 1}. ${escapeHtml(p.token0.symbol)} / ${escapeHtml(p.token1.symbol)}</b> (${escapeHtml(p.feeLabel)})\n` +
+        `   • <b>Price:</b> <code>${formatPrice(p.priceToken1PerToken0)}</code> ${p.token1.symbol}/${p.token0.symbol}\n` +
+        `   • <b>TVL:</b> <code>${p.formattedTvl || '$0'}</code> | <b>24h Vol:</b> <code>${p.formattedVolume24h || '$0'}</code>\n\n`;
+    });
+    poolListText += `Select pool to open position in:`;
+
     return ctx.reply(
-      `🏊 <b>Available Pools for ${escapeHtml(discovery.token.symbol)}:</b>\nSelect pool to open position in:`,
+      poolListText,
       {
         parse_mode: 'HTML',
         reply_markup: poolSelectionKeyboard(discovery.pools),

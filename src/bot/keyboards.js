@@ -32,8 +32,10 @@ export function walletApprovalKeyboard(hasPrivateKey) {
 export function poolSelectionKeyboard(pools) {
   const kb = new InlineKeyboard();
   pools.forEach((p, idx) => {
+    const tvlStr = p.formattedTvl || '$0';
+    const volStr = p.formattedVolume24h || '$0';
     kb.text(
-      `🏊 ${p.token0.symbol}/${p.token1.symbol} (${p.feeLabel})`,
+      `🏊 ${p.token0.symbol}/${p.token1.symbol} (${p.feeLabel}) | TVL: ${tvlStr} | Vol: ${volStr}`,
       `pool:${idx}`
     ).row();
   });

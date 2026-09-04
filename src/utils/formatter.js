@@ -33,6 +33,14 @@ export function formatUsd(amount) {
   }).format(amount);
 }
 
+export function formatCompactUsd(amount) {
+  if (typeof amount !== 'number' || isNaN(amount) || amount === 0) return '$0';
+  if (amount >= 1e9) return `$${(amount / 1e9).toFixed(2)}B`;
+  if (amount >= 1e6) return `$${(amount / 1e6).toFixed(2)}M`;
+  if (amount >= 1e3) return `$${(amount / 1e3).toFixed(2)}K`;
+  return `$${amount.toFixed(2)}`;
+}
+
 export function shortenAddress(address, chars = 4) {
   if (!address || typeof address !== 'string') return '';
   if (address.length <= chars * 2 + 2) return address;

@@ -245,7 +245,9 @@ async function handleOpenPosition() {
 
     console.log(pc.bold(`\nAvailable Pools for ${discovery.token.symbol}:`));
     discovery.pools.forEach((p, idx) => {
-      console.log(` ${idx + 1}. ${p.token0.symbol}/${p.token1.symbol} (Fee: ${p.feeLabel}) - Price: ${formatPrice(p.priceToken1PerToken0)} ${p.token1.symbol}/${p.token0.symbol}`);
+      const tvlStr = p.formattedTvl || '$0';
+      const volStr = p.formattedVolume24h || '$0';
+      console.log(` ${idx + 1}. ${p.token0.symbol}/${p.token1.symbol} (Fee: ${p.feeLabel}) - Price: ${formatPrice(p.priceToken1PerToken0)} ${p.token1.symbol}/${p.token0.symbol} | TVL: ${pc.green(tvlStr)} | 24h Vol: ${pc.cyan(volStr)}`);
     });
 
     const poolIdxStr = await input({ message: `Select pool number to open position in (1-${discovery.pools.length}): ` });

@@ -1,9 +1,103 @@
-import { getAddress, isAddress, parseAbiItem, zeroAddress } from 'viem';
+import { formatUnits, getAddress, isAddress, parseAbiItem, zeroAddress } from 'viem';
 import { CONTRACTS, CONTRACTS_V4, ERC20_ABI, FACTORY_ABI, FEE_TIERS, POOL_ABI, TOKENS } from '../config/constants.js';
+import { formatCompactUsd } from '../utils/formatter.js';
 import { priceFromSqrtX96 } from '../utils/math.js';
 import { db } from './json-db.js';
 import { getPublicClient } from './rpc.js';
 import { inspectPoolV4 } from './v4.js';
+
+function withTimeout(promise, ms = 3500) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('RPC query timeout')), ms)),
+  ]);
+}
+
+export async function calculatePoolStats(pool, client, fromBlock) {
+  let tvlUsd = 0;
+  let volume24hUsd = 0;
+
+  try {
+    if (pool.version === 'V3') {
+      const [bal0, bal1] = await Promise.all([
+        client.readContract({ address: pool.token0.address, abi: ERC20_ABI, functionName: 'balanceOf', args: [pool.address] }).catch(() => 0n),
+        client.readContract({ address: pool.token1.address, abi: ERC20_ABI, functionName: 'balanceOf', args: [pool.address] }).catch(() => 0n),
+      ]);
+      const amt0 = Number(formatUnits(bal0, pool.token0.decimals));
+      const amt1 = Number(formatUnits(bal1, pool.token1.decimals));
+
+      if (pool.token0.symbol === 'USDG') {
+        tvlUsd = amt0 + amt1 * pool.priceToken0PerToken1;
+      } else if (pool.token1.symbol === 'USDG') {
+        tvlUsd = amt1 + amt0 * pool.priceToken1PerToken0;
+      } else {
+        tvlUsd = amt0 * (pool.priceToken1PerToken0 || 1) + amt1;
+      }
+
+      const v3SwapEvent = parseAbiItem('event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)');
+      const logs = await withTimeout(client.getLogs({
+        address: pool.address,
+        event: v3SwapEvent,
+        fromBlock,
+        toBlock: 'latest',
+      })).catch(() => []);
+
+      for (const log of logs) {
+        const raw0 = log.args.amount0 < 0n ? -log.args.amount0 : log.args.amount0;
+        const raw1 = log.args.amount1 < 0n ? -log.args.amount1 : log.args.amount1;
+        const a0 = Number(formatUnits(raw0, pool.token0.decimals));
+        const a1 = Number(formatUnits(raw1, pool.token1.decimals));
+        if (pool.token0.symbol === 'USDG') volume24hUsd += a0;
+        else if (pool.token1.symbol === 'USDG') volume24hUsd += a1;
+        else volume24hUsd += a0 * (pool.priceToken1PerToken0 || 1);
+      }
+    } else if (pool.version === 'V4') {
+      const [bal0, bal1] = await Promise.all([
+        client.readContract({ address: pool.token0.address, abi: ERC20_ABI, functionName: 'balanceOf', args: [CONTRACTS_V4.POOL_MANAGER] }).catch(() => 0n),
+        client.readContract({ address: pool.token1.address, abi: ERC20_ABI, functionName: 'balanceOf', args: [CONTRACTS_V4.POOL_MANAGER] }).catch(() => 0n),
+      ]);
+      const amt0 = Number(formatUnits(bal0, pool.token0.decimals));
+      const amt1 = Number(formatUnits(bal1, pool.token1.decimals));
+
+      if (pool.token0.symbol === 'USDG') {
+        tvlUsd = amt0 + amt1 * pool.priceToken0PerToken1;
+      } else if (pool.token1.symbol === 'USDG') {
+        tvlUsd = amt1 + amt0 * pool.priceToken1PerToken0;
+      } else {
+        tvlUsd = amt0 * (pool.priceToken1PerToken0 || 1) + amt1;
+      }
+
+      const v4SwapEvent = parseAbiItem('event Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)');
+      const logs = await withTimeout(client.getLogs({
+        address: CONTRACTS_V4.POOL_MANAGER,
+        event: v4SwapEvent,
+        args: { id: pool.poolId },
+        fromBlock,
+        toBlock: 'latest',
+      })).catch(() => []);
+
+      for (const log of logs) {
+        const raw0 = log.args.amount0 < 0n ? -log.args.amount0 : BigInt(log.args.amount0);
+        const raw1 = log.args.amount1 < 0n ? -log.args.amount1 : BigInt(log.args.amount1);
+        const a0 = Number(formatUnits(raw0, pool.token0.decimals));
+        const a1 = Number(formatUnits(raw1, pool.token1.decimals));
+        if (pool.token0.symbol === 'USDG') volume24hUsd += a0;
+        else if (pool.token1.symbol === 'USDG') volume24hUsd += a1;
+        else volume24hUsd += a0 * (pool.priceToken1PerToken0 || 1);
+      }
+    }
+  } catch {
+    // Ignore stats errors
+  }
+
+  return {
+    ...pool,
+    tvlUsd,
+    volume24hUsd,
+    formattedTvl: formatCompactUsd(tvlUsd),
+    formattedVolume24h: formatCompactUsd(volume24hUsd),
+  };
+}
 
 export async function inspectToken(tokenAddress) {
   if (!tokenAddress || !isAddress(tokenAddress)) {
@@ -112,48 +206,77 @@ export async function discoverPoolsForToken(tokenInput) {
   const pools = [];
   const poolIdsSeen = new Set();
 
-  // 1. Check Uniswap V3 Pools across standard fee tiers
+  const latestBlock = await client.getBlockNumber().catch(() => 54000000n);
+  const fromBlock = latestBlock > 15000n ? latestBlock - 15000n : 0n;
+
+  // 1. Check Uniswap V3 Pools across standard fee tiers in parallel
+  const v3PoolPromises = [];
   for (const quote of quoteTokens) {
     if (quote.address.toLowerCase() === targetToken.address.toLowerCase()) continue;
-
     for (const tier of FEE_TIERS) {
-      try {
-        const poolV3 = await inspectPool(targetToken.address, quote.address, tier.fee);
-        if (poolV3 && poolV3.initialized) {
-          pools.push({
-            ...poolV3,
-            version: 'V3',
-            feeLabel: `${tier.label} [V3]`,
-          });
-        }
-      } catch {
-        // Ignore uninitialized V3 pools
-      }
+      v3PoolPromises.push(
+        inspectPool(targetToken.address, quote.address, tier.fee)
+          .then(poolV3 => {
+            if (poolV3 && poolV3.initialized) {
+              return { ...poolV3, version: 'V3', feeLabel: `${tier.label} [V3]` };
+            }
+            return null;
+          })
+          .catch(() => null)
+      );
     }
   }
 
-  // 2. Discover Uniswap V4 Pools by querying PoolManager Initialize event logs
+  const v3Results = await Promise.all(v3PoolPromises);
+  for (const poolV3 of v3Results) {
+    if (poolV3) pools.push(poolV3);
+  }
+
+  // 2. Discover Uniswap V4 Pools (Check standard fee tiers in parallel + Event logs fallback)
+  const v4PoolPromises = [];
+  for (const quote of quoteTokens) {
+    if (quote.address.toLowerCase() === targetToken.address.toLowerCase()) continue;
+    for (const tier of FEE_TIERS) {
+      v4PoolPromises.push(
+        inspectPoolV4(targetToken.address, quote.address, tier.fee, tier.tickSpacing, CONTRACTS_V4.ZERO_HOOK)
+          .then(poolV4 => {
+            if (poolV4 && poolV4.initialized) {
+              const feePercentStr = (tier.fee / 10000).toFixed(2) + '%';
+              return { ...poolV4, version: 'V4', feeLabel: `${feePercentStr} [V4]` };
+            }
+            return null;
+          })
+          .catch(() => null)
+      );
+    }
+  }
+
+  const v4Results = await Promise.all(v4PoolPromises);
+  for (const poolV4 of v4Results) {
+    if (poolV4 && !poolIdsSeen.has(poolV4.poolId)) {
+      poolIdsSeen.add(poolV4.poolId);
+      pools.push(poolV4);
+    }
+  }
+
+  // Fallback: Query PoolManager Initialize event logs for custom V4 pools
   const initializeEvent = parseAbiItem('event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)');
-
   try {
-    const latestBlock = await client.getBlockNumber().catch(() => 53000000n);
-    const fromBlock = latestBlock > 300000n ? latestBlock - 300000n : 0n;
-
     const [logs0, logs1] = await Promise.all([
-      client.getLogs({
+      withTimeout(client.getLogs({
         address: CONTRACTS_V4.POOL_MANAGER,
         event: initializeEvent,
         args: { currency0: targetToken.address },
         fromBlock,
         toBlock: 'latest',
-      }).catch(() => []),
-      client.getLogs({
+      }), 2000).catch(() => []),
+      withTimeout(client.getLogs({
         address: CONTRACTS_V4.POOL_MANAGER,
         event: initializeEvent,
         args: { currency1: targetToken.address },
         fromBlock,
         toBlock: 'latest',
-      }).catch(() => []),
+      }), 2000).catch(() => []),
     ]);
 
     const v4Logs = [...logs0, ...logs1];
@@ -186,10 +309,12 @@ export async function discoverPoolsForToken(tokenInput) {
     // Fall back if getLogs fails
   }
 
+  // 3. Enrich all discovered pools with TVL and 24h Volume statistics concurrently
+  const poolsWithStats = await Promise.all(pools.map(p => calculatePoolStats(p, client, fromBlock)));
 
   return {
     token: targetToken,
-    pools,
+    pools: poolsWithStats,
   };
 }
 
