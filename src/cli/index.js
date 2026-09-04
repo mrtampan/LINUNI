@@ -345,13 +345,17 @@ async function handleOpenPosition() {
       desiredAmount1,
     });
 
+    const poolFeePercent = (pool.fee / 10000).toFixed(2) + '%';
+    const gasUsdStr = quote.estimatedGasFeeUsd ? `$${quote.estimatedGasFeeUsd.toFixed(2)} USD` : 'N/A';
+
     console.log('\n' + pc.cyan('==============================================================='));
-    console.log(pc.bold(pc.magenta('📋 POSITION PREVIEW & FEE BREAKDOWN')));
+    console.log(pc.bold(pc.magenta('📋 POSITION PREVIEW & DETAILED FEE BREAKDOWN')));
     if (quote.isUsdgSingleSided) {
       console.log(pc.bgGreen(pc.black(` 💵 SINGLE-SIDED DEPOSIT: USDG ONLY (-${quote.dropPercent}% Drop Range) `)));
     }
     console.log(pc.cyan('==============================================================='));
-    console.log(`${pc.bold('Pool:')}                ${pool.token0.symbol} / ${pool.token1.symbol} (${pool.feeLabel})`);
+    console.log(`${pc.bold('Pool:')}                ${pool.token0.symbol} / ${pool.token1.symbol}`);
+    console.log(`${pc.bold('Pool LP Fee Tier:')}    ${pool.feeLabel} (${poolFeePercent})`);
     console.log(`${pc.bold('Current Price:')}       ${formatPrice(quote.currentPrice)} ${pool.token1.symbol} per ${pool.token0.symbol}`);
     console.log(`${pc.bold('Min Price Bound:')}     ${formatPrice(quote.lowerPrice)} ${pool.token1.symbol} per ${pool.token0.symbol}`);
     console.log(`${pc.bold('Max Price Bound:')}     ${formatPrice(quote.upperPrice)} ${pool.token1.symbol} per ${pool.token0.symbol}`);
@@ -361,8 +365,18 @@ async function handleOpenPosition() {
     console.log(`  - ${pc.yellow(quote.formattedAmount1)} ${pool.token1.symbol}`);
     console.log(`Total Projected Deposit Value: ${pc.green(quote.formattedTotalValueUsd)}`);
     console.log(pc.cyan('---------------------------------------------------------------'));
-    console.log(`Estimated Gas Fee: ${quote.estimatedGasFeeEth} ETH (~$${(parseFloat(quote.estimatedGasFeeEth) * (pool.token0.symbol === 'WETH' ? quote.currentPrice : 1)).toFixed(2)})`);
+    console.log(pc.bold('Detailed Fee Estimation:'));
+    console.log(`  • Uniswap Pool LP Fee:   ${pc.yellow(poolFeePercent)}`);
+    console.log(`  • Est. Network Gas Units:${pc.yellow(` ~${(quote.estimatedGasUnits || 350000n).toLocaleString()} units`)}`);
+    console.log(`  • Base Gas Price:        ${pc.yellow(`${quote.gasPriceGwei || '1.89'} Gwei`)}`);
+    console.log(`  • Estimated Gas Fee:     ${pc.bold(pc.green(`~$${(quote.estimatedGasFeeUsd || 0).toFixed(2)} USD`))} (${pc.yellow(`${quote.estimatedGasFeeEth} ETH`)})`);
     console.log(`Projected Liquidity Units: ${quote.liquidity.toString()}`);
+
+    if (quote.isGasFeeExceeded) {
+      console.log(pc.red(`\n⚠️ GAS FEE ALERT: Gas cost (${gasUsdStr}) exceeds MAX_GAS_COST_USD limit ($${quote.maxGasCostUsd.toFixed(2)})!`));
+    } else if (quote.estimatedGasFeeUsd && quote.estimatedGasFeeUsd > quote.totalValueUsd) {
+      console.log(pc.yellow(`\n⚠️ HIGH GAS OVERHEAD ALERT: Gas fee (${gasUsdStr}) is higher than total deposit value (${quote.formattedTotalValueUsd})!`));
+    }
     console.log(pc.cyan('===============================================================\n'));
 
     const confirmMint = await confirm({

@@ -68,11 +68,21 @@ export function formatQuotePreview(quote, pool) {
     ? `💵 <b>SINGLE-SIDED DEPOSIT: USDG ONLY (-${quote.dropPercent}% Drop Range)</b>\n`
     : '';
 
+  const gasFeeUsdStr = quote.estimatedGasFeeUsd ? ` (~$${quote.estimatedGasFeeUsd.toFixed(2)} USD)` : '';
+  const gasWarningBadge = quote.isGasFeeExceeded
+    ? `\n⚠️ <b>GAS FEE ALERT:</b> Gas cost (<b>$${quote.estimatedGasFeeUsd.toFixed(2)} USD</b>) exceeds MAX_GAS_COST_USD limit (<code>$${quote.maxGasCostUsd.toFixed(2)} USD</code>)!\n`
+    : (quote.estimatedGasFeeUsd && quote.estimatedGasFeeUsd > quote.totalValueUsd)
+      ? `\n⚠️ <b>HIGH GAS OVERHEAD ALERT:</b> Gas fee (<b>$${quote.estimatedGasFeeUsd.toFixed(2)} USD</b>) is higher than deposit value (<code>${quote.formattedTotalValueUsd}</code>)!\n`
+      : '';
+
+  const poolFeePercent = (pool.fee / 10000).toFixed(2) + '%';
+
   return (
-    `📋 <b>POSITION PREVIEW & FEE BREAKDOWN</b>\n` +
+    `📋 <b>POSITION PREVIEW & DETAILED FEE BREAKDOWN</b>\n` +
     `<b>====================================</b>\n` +
     singleSidedBadge +
-    `• <b>Pool:</b> <code>${pool.token0.symbol} / ${pool.token1.symbol} (${pool.feeLabel})</code>\n` +
+    `• <b>Pool:</b> <code>${pool.token0.symbol} / ${pool.token1.symbol}</code>\n` +
+    `• <b>Pool Fee Tier:</b> <code>${pool.feeLabel || poolFeePercent}</code> (<code>${poolFeePercent}</code>)\n` +
     `• <b>Current Price:</b> <code>${formatPrice(quote.currentPrice)}</code> ${pool.token1.symbol}/${pool.token0.symbol}\n` +
     `• <b>Min Price Bound:</b> <code>${formatPrice(quote.lowerPrice)}</code> ${pool.token1.symbol}/${pool.token0.symbol}\n` +
     `• <b>Max Price Bound:</b> <code>${formatPrice(quote.upperPrice)}</code> ${pool.token1.symbol}/${pool.token0.symbol}\n` +
@@ -82,8 +92,13 @@ export function formatQuotePreview(quote, pool) {
     `  - <code>${quote.formattedAmount1}</code> ${pool.token1.symbol}\n` +
     `💰 <b>Total Projected Deposit Value:</b> <code>${quote.formattedTotalValueUsd}</code>\n` +
     `<b>------------------------------------</b>\n` +
-    `⛽ <b>Estimated Gas Fee:</b> <code>${quote.estimatedGasFeeEth} ETH</code>\n` +
-    `📊 <b>Projected Liquidity Units:</b> <code>${quote.liquidity.toString()}</code>\n` +
+    `⛽ <b>DETAILED FEE ESTIMATION:</b>\n` +
+    `  • <b>Uniswap Pool LP Fee:</b> <code>${poolFeePercent}</code>\n` +
+    `  • <b>Est. Network Gas Units:</b> <code>~${(quote.estimatedGasUnits || 350000n).toLocaleString()} units</code>\n` +
+    `  • <b>Base Gas Price:</b> <code>${quote.gasPriceGwei || '1.89'} Gwei</code>\n` +
+    `  • <b>Estimated Gas Fee:</b> <code>~$${(quote.estimatedGasFeeUsd || 0).toFixed(2)} USD</code> (<code>${quote.estimatedGasFeeEth} ETH</code>)\n` +
+    `📊 <b>Projected Liquidity Units (L):</b> <code>${quote.liquidity.toString()}</code>\n` +
+    gasWarningBadge +
     `<b>====================================</b>`
   );
 }

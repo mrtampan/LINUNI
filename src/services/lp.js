@@ -130,9 +130,22 @@ export async function quoteOpenPosition({ pool, rangeChoice, customLowerPrice, c
   const totalValueUsd = val0Usd + val1Usd;
 
   // Estimate gas cost
-  const gasPrice = await client.getGasPrice().catch(() => 100000000n);
+  const env = getEnv();
+  const gasPrice = await client.getGasPrice().catch(() => 1800000000n);
+  const gasPriceGwei = (Number(gasPrice) / 1e9).toFixed(2);
   const estimatedGasUnits = pool.version === 'V4' ? 260000n : 350000n;
   const estimatedGasFeeEth = formatTokenAmount(estimatedGasUnits * gasPrice, 18, 6);
+
+  // Estimate ETH price in USD
+  let ethPriceUsd = 3600;
+  if (pool.token0.symbol === 'WETH' && pool.token1.symbol === 'USDG') {
+    ethPriceUsd = pool.priceToken1PerToken0 || 3600;
+  } else if (pool.token1.symbol === 'WETH' && pool.token0.symbol === 'USDG') {
+    ethPriceUsd = pool.priceToken0PerToken1 || 3600;
+  }
+  const estimatedGasFeeUsd = parseFloat(estimatedGasFeeEth) * ethPriceUsd;
+  const maxGasCostUsd = env.maxGasCostUsd || 2.00;
+  const isGasFeeExceeded = estimatedGasFeeUsd > maxGasCostUsd;
 
   return {
     pool,
@@ -152,11 +165,15 @@ export async function quoteOpenPosition({ pool, rangeChoice, customLowerPrice, c
     totalValueUsd,
     formattedTotalValueUsd: formatUsd(totalValueUsd),
     estimatedGasUnits,
+    gasPriceGwei,
     estimatedGasFeeEth,
+    estimatedGasFeeUsd,
+    maxGasCostUsd,
+    isGasFeeExceeded,
   };
 }
 
-export async function mintPosition({ pool, tickLower, tickUpper, amount0Desired, amount1Desired, slippageBps = 100 }) {
+export async function mintPosition({ pool, tickLower, tickUpper, amount0Desired, amount1Desired, slippageBps = 100, allowHighGas = false }) {
   const env = getEnv();
   const client = getPublicClient();
   const walletClient = getWalletClient();
@@ -164,6 +181,17 @@ export async function mintPosition({ pool, tickLower, tickUpper, amount0Desired,
 
   if (!account) {
     throw new Error('PRIVATE_KEY is required to mint position');
+  }
+
+  // Pre-flight gas price check against MAX_GAS_COST_USD
+  const currentGasPrice = await client.getGasPrice().catch(() => 1800000000n);
+  const estimatedGasUnits = pool.version === 'V4' ? 260000n : 350000n;
+  const gasEth = Number(estimatedGasUnits * currentGasPrice) / 1e18;
+  const ethPrice = (pool.token0.symbol === 'WETH' && pool.token1.symbol === 'USDG') ? pool.priceToken1PerToken0 : 3600;
+  const gasUsd = gasEth * ethPrice;
+
+  if (gasUsd > env.maxGasCostUsd && !allowHighGas) {
+    throw new Error(`Fee gas jaringan saat ini ($${gasUsd.toFixed(2)} USD) melebihi batas MAX_GAS_COST_USD ($${env.maxGasCostUsd.toFixed(2)} USD). Base fee Robinhood sedang tinggi!`);
   }
 
   // 0. Pre-flight balance check
